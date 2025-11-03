@@ -14,7 +14,10 @@ const log = {
 
 // Env
 const PORT = process.env.PORT || 10000;
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 const INTERNAL_EMIT_SECRET = process.env.INTERNAL_EMIT_SECRET || "";
 
 // Firebase Admin init (optional, used to verify client tokens)
@@ -22,16 +25,25 @@ if (!admin.apps.length) {
   try {
     const projectId = process.env.FIREBASE_PROJECT_ID;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    const privateKey = (process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+    const privateKey = (process.env.FIREBASE_PRIVATE_KEY || "").replace(
+      /\\n/g,
+      "\n"
+    );
 
     if (projectId && clientEmail && privateKey) {
       admin.initializeApp({
-        credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+        credential: admin.credential.cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
         databaseURL: process.env.FIREBASE_DATABASE_URL,
       });
       log.info("Firebase Admin initialized");
     } else {
-      log.warn("Firebase Admin not fully configured; client token verification will be skipped");
+      log.warn(
+        "Firebase Admin not fully configured; client token verification will be skipped"
+      );
     }
   } catch (e) {
     log.error("Failed to initialize Firebase Admin", { error: e.message });
@@ -67,10 +79,7 @@ const io = new SocketIOServer(server, {
   cors: {
     origin: ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : true,
     credentials: true,
-    allowedHeaders: [
-      "Authorization",
-      "ngrok-skip-browser-warning",
-    ],
+    allowedHeaders: ["Authorization", "ngrok-skip-browser-warning"],
   },
   transports: ["polling", "websocket"],
   allowEIO3: true,
@@ -93,8 +102,9 @@ async function verifyIdTokenMaybe(idToken) {
 io.on("connection", async (socket) => {
   try {
     const token = socket.handshake.auth && socket.handshake.auth.token;
+    const providedUid = socket.handshake.auth && socket.handshake.auth.uid;
     const decoded = await verifyIdTokenMaybe(token);
-    const userId = decoded?.uid || null;
+    const userId = decoded?.uid || providedUid || null;
 
     if (!userId) {
       // Allow anonymous connect but do not join user room
@@ -104,7 +114,11 @@ io.on("connection", async (socket) => {
     } else {
       const userRoom = `user:${userId}`;
       socket.join(userRoom);
-      log.info("Client joined user room", { userId, room: userRoom, sid: socket.id });
+      log.info("Client joined user room", {
+        userId,
+        room: userRoom,
+        sid: socket.id,
+      });
     }
 
     socket.on("join:challenge", ({ challengeId }) => {
@@ -169,35 +183,40 @@ function emitChallengeCompleted(challengerId, challengedId, payload) {
 // Internal emit routes
 app.post("/emit/challenge-created", requireInternalSecret, (req, res) => {
   const { challengerId, challengedId, data } = req.body || {};
-  if (!challengerId || !challengedId || !data) return res.status(400).json({ error: "Missing fields" });
+  if (!challengerId || !challengedId || !data)
+    return res.status(400).json({ error: "Missing fields" });
   emitChallengeCreated(challengerId, challengedId, data);
   return res.json({ ok: true });
 });
 
 app.post("/emit/challenge-accepted", requireInternalSecret, (req, res) => {
   const { challengerId, challengedId, data } = req.body || {};
-  if (!challengerId || !challengedId || !data) return res.status(400).json({ error: "Missing fields" });
+  if (!challengerId || !challengedId || !data)
+    return res.status(400).json({ error: "Missing fields" });
   emitChallengeAccepted(challengerId, challengedId, data);
   return res.json({ ok: true });
 });
 
 app.post("/emit/challenge-rejected", requireInternalSecret, (req, res) => {
   const { challengerId, challengedId, data } = req.body || {};
-  if (!challengerId || !challengedId || !data) return res.status(400).json({ error: "Missing fields" });
+  if (!challengerId || !challengedId || !data)
+    return res.status(400).json({ error: "Missing fields" });
   emitChallengeRejected(challengerId, challengedId, data);
   return res.json({ ok: true });
 });
 
 app.post("/emit/score-updated", requireInternalSecret, (req, res) => {
   const { userId, opponentId, challengeId, data } = req.body || {};
-  if (!userId || !opponentId || !challengeId || !data) return res.status(400).json({ error: "Missing fields" });
+  if (!userId || !opponentId || !challengeId || !data)
+    return res.status(400).json({ error: "Missing fields" });
   emitScoreUpdated(userId, opponentId, challengeId, data);
   return res.json({ ok: true });
 });
 
 app.post("/emit/challenge-completed", requireInternalSecret, (req, res) => {
   const { challengerId, challengedId, data } = req.body || {};
-  if (!challengerId || !challengedId || !data) return res.status(400).json({ error: "Missing fields" });
+  if (!challengerId || !challengedId || !data)
+    return res.status(400).json({ error: "Missing fields" });
   emitChallengeCompleted(challengerId, challengedId, data);
   return res.json({ ok: true });
 });
@@ -209,5 +228,3 @@ app.get("/health", (req, res) => {
 server.listen(PORT, () => {
   log.info("Sockets service listening", { port: PORT });
 });
-
-
