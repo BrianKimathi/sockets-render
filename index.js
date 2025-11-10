@@ -180,6 +180,59 @@ function emitChallengeCompleted(challengerId, challengedId, payload) {
   io.to(`user:${challengedId}`).emit("challenge:completed", payload);
 }
 
+function emitChallengeCancelled(challengerId, challengedId, payload) {
+  const enriched = { type: payload.type || "challenge_cancelled", ...payload };
+  io.to(`user:${challengerId}`).emit("challenge:cancelled", enriched);
+  io.to(`user:${challengedId}`).emit("challenge:cancelled", enriched);
+  if (payload.challengeId) {
+    io.to(`challenge:${payload.challengeId}`).emit(
+      "challenge:cancelled",
+      enriched
+    );
+  }
+}
+
+function emitChallengeReaction(challengeId, userId, reaction, payload) {
+  const enriched = { challengeId, userId, reaction, ...payload };
+  io.to(`challenge:${challengeId}`).emit("challenge:reaction", enriched);
+  io.to(`user:${userId}`).emit("challenge:reaction", enriched);
+  if (payload.opponentId) {
+    io.to(`user:${payload.opponentId}`).emit("challenge:reaction", enriched);
+  }
+}
+
+function emitChallengeMessage(challengeId, userId, message, payload) {
+  const enriched = { challengeId, userId, message, ...payload };
+  io.to(`challenge:${challengeId}`).emit("challenge:message", enriched);
+  io.to(`user:${userId}`).emit("challenge:message", enriched);
+  if (payload.opponentId) {
+    io.to(`user:${payload.opponentId}`).emit("challenge:message", enriched);
+  }
+}
+
+function emitChallengeGameStarted(
+  userId,
+  opponentId,
+  challengeId,
+  payload = {}
+) {
+  const enriched = {
+    challengeId,
+    userId,
+    type: payload.type || "game_started",
+    ...payload,
+  };
+  if (opponentId) {
+    io.to(`user:${opponentId}`).emit("challenge:game_started", enriched);
+  }
+  if (userId) {
+    io.to(`user:${userId}`).emit("challenge:game_started", enriched);
+  }
+  if (challengeId) {
+    io.to(`challenge:${challengeId}`).emit("challenge:game_started", enriched);
+  }
+}
+
 // Internal emit routes
 app.post("/emit/challenge-created", requireInternalSecret, (req, res) => {
   const { challengerId, challengedId, data } = req.body || {};
@@ -218,6 +271,39 @@ app.post("/emit/challenge-completed", requireInternalSecret, (req, res) => {
   if (!challengerId || !challengedId || !data)
     return res.status(400).json({ error: "Missing fields" });
   emitChallengeCompleted(challengerId, challengedId, data);
+  return res.json({ ok: true });
+});
+
+app.post("/emit/challenge-cancelled", requireInternalSecret, (req, res) => {
+  const { challengerId, challengedId, data } = req.body || {};
+  if (!challengerId || !challengedId || !data)
+    return res.status(400).json({ error: "Missing fields" });
+  emitChallengeCancelled(challengerId, challengedId, data);
+  return res.json({ ok: true });
+});
+
+app.post("/emit/challenge-reaction", requireInternalSecret, (req, res) => {
+  const { challengeId, userId, opponentId, reaction, data } = req.body || {};
+  if (!challengeId || !userId || !reaction || !data)
+    return res.status(400).json({ error: "Missing fields" });
+  emitChallengeReaction(challengeId, userId, reaction, { ...data, opponentId });
+  return res.json({ ok: true });
+});
+
+app.post("/emit/challenge-message", requireInternalSecret, (req, res) => {
+  const { challengeId, userId, opponentId, message, data } = req.body || {};
+  if (!challengeId || !userId || !message || !data)
+    return res.status(400).json({ error: "Missing fields" });
+  emitChallengeMessage(challengeId, userId, message, { ...data, opponentId });
+  return res.json({ ok: true });
+});
+
+app.post("/emit/challenge-game-started", requireInternalSecret, (req, res) => {
+  const { userId, opponentId, challengeId, data } = req.body || {};
+  if (!userId || !opponentId || !challengeId) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+  emitChallengeGameStarted(userId, opponentId, challengeId, data || {});
   return res.json({ ok: true });
 });
 
