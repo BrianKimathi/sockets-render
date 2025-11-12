@@ -114,10 +114,18 @@ io.on("connection", async (socket) => {
     } else {
       const userRoom = `user:${userId}`;
       socket.join(userRoom);
+      socket.userId = userId; // Store for disconnect handler
       log.info("Client joined user room", {
         userId,
         room: userRoom,
         sid: socket.id,
+      });
+      
+      // Emit online status
+      socket.broadcast.emit("user:online", {
+        userId,
+        online: true,
+        timestamp: Date.now(),
       });
     }
 
@@ -135,8 +143,140 @@ io.on("connection", async (socket) => {
       log.debug("Client left challenge room", { room, sid: socket.id });
     });
 
+    // Chat room events
+    socket.on("join:chat", ({ chatId, chatType }) => {
+      if (!chatId) return;
+      const room = `chat:${chatType}:${chatId}`;
+      socket.join(room);
+      log.debug("Client joined chat room", { room, sid: socket.id, userId });
+    });
+
+    socket.on("leave:chat", ({ chatId, chatType }) => {
+      if (!chatId) return;
+      const room = `chat:${chatType}:${chatId}`;
+      socket.leave(room);
+      log.debug("Client left chat room", { room, sid: socket.id });
+    });
+
+    // Typing indicator events
+    socket.on("chat:typing:start", ({ chatId, chatType, userId, userName }) => {
+      if (!chatId || !userId) return;
+      const room = `chat:${chatType}:${chatId}`;
+      socket.to(room).emit("chat:typing", {
+        chatId,
+        chatType,
+        userId,
+        userName,
+        isTyping: true,
+      });
+      log.debug("Typing started", { room, userId, sid: socket.id });
+    });
+
+    socket.on("chat:typing:stop", ({ chatId, chatType, userId }) => {
+      if (!chatId || !userId) return;
+      const room = `chat:${chatType}:${chatId}`;
+      socket.to(room).emit("chat:typing", {
+        chatId,
+        chatType,
+        userId,
+        isTyping: false,
+      });
+      log.debug("Typing stopped", { room, userId, sid: socket.id });
+    });
+
+    // Game playing events
+    socket.on(
+      "chat:game:playing",
+      ({ chatId, chatType, userId, userName, gameTitle, gameId }) => {
+        if (!chatId || !userId || !gameTitle) return;
+        const room = `chat:${chatType}:${chatId}`;
+        socket.to(room).emit("chat:game:playing", {
+          chatId,
+          chatType,
+          userId,
+          userName,
+          gameTitle,
+          gameId,
+          isPlaying: true,
+        });
+        log.debug("Game playing", { room, userId, gameTitle, sid: socket.id });
+      }
+    );
+
+    socket.on("chat:game:stopped", ({ chatId, chatType, userId }) => {
+      if (!chatId || !userId) return;
+      const room = `chat:${chatType}:${chatId}`;
+      socket.to(room).emit("chat:game:playing", {
+        chatId,
+        chatType,
+        userId,
+        isPlaying: false,
+      });
+      log.debug("Game stopped", { room, userId, sid: socket.id });
+    });
+
+    // Game score events
+    socket.on(
+      "chat:game:score",
+      ({ chatId, chatType, userId, userName, gameTitle, score }) => {
+        if (!chatId || !userId || score === undefined) return;
+        const room = `chat:${chatType}:${chatId}`;
+        socket.to(room).emit("chat:game:score", {
+          chatId,
+          chatType,
+          userId,
+          userName,
+          gameTitle,
+          score,
+          timestamp: Date.now(),
+        });
+        log.debug("Game score", {
+          room,
+          userId,
+          gameTitle,
+          score,
+          sid: socket.id,
+        });
+      }
+    );
+
+    // Message status events (read receipts, delivered)
+    socket.on("chat:message:read", ({ chatId, chatType, messageId, userId }) => {
+      if (!chatId || !messageId || !userId) return;
+      const room = `chat:${chatType}:${chatId}`;
+      socket.to(room).emit("chat:message:read", {
+        chatId,
+        chatType,
+        messageId,
+        userId,
+        readAt: Date.now(),
+      });
+      log.debug("Message read", { room, messageId, userId, sid: socket.id });
+    });
+
+    socket.on("chat:message:delivered", ({ chatId, chatType, messageId, userId }) => {
+      if (!chatId || !messageId || !userId) return;
+      const room = `chat:${chatType}:${chatId}`;
+      socket.to(room).emit("chat:message:delivered", {
+        chatId,
+        chatType,
+        messageId,
+        userId,
+        deliveredAt: Date.now(),
+      });
+      log.debug("Message delivered", { room, messageId, userId, sid: socket.id });
+    });
+
     socket.on("disconnect", (reason) => {
       log.info("Socket disconnected", { sid: socket.id, reason });
+      // Emit offline status
+      if (userId) {
+        socket.broadcast.emit("user:offline", {
+          userId,
+          online: false,
+          timestamp: Date.now(),
+        });
+      }
     });
   } catch (e) {
     log.error("Socket connection handler error", { error: e.message });
@@ -304,6 +444,138 @@ app.post("/emit/challenge-game-started", requireInternalSecret, (req, res) => {
     return res.status(400).json({ error: "Missing fields" });
   }
   emitChallengeGameStarted(userId, opponentId, challengeId, data || {});
+  return res.json({ ok: true });
+});
+
+// Chat emit helpers
+function emitChatTyping(chatId, chatType, userId, userName, isTyping) {
+  const room = `chat:${chatType}:${chatId}`;
+  io.to(room).emit("chat:typing", {
+    chatId,
+    chatType,
+    userId,
+    userName,
+    isTyping,
+  });
+}
+
+function emitChatGamePlaying(
+  chatId,
+  chatType,
+  userId,
+  userName,
+  gameTitle,
+  gameId,
+  isPlaying
+) {
+  const room = `chat:${chatType}:${chatId}`;
+  io.to(room).emit("chat:game:playing", {
+    chatId,
+    chatType,
+    userId,
+    userName,
+    gameTitle,
+    gameId,
+    isPlaying,
+  });
+}
+
+function emitChatGameScore(
+  chatId,
+  chatType,
+  userId,
+  userName,
+  gameTitle,
+  score
+) {
+  const room = `chat:${chatType}:${chatId}`;
+  io.to(room).emit("chat:game:score", {
+    chatId,
+    chatType,
+    userId,
+    userName,
+    gameTitle,
+    score,
+    timestamp: Date.now(),
+  });
+}
+
+// Internal emit routes for chat
+app.post("/emit/chat-typing", requireInternalSecret, (req, res) => {
+  const { chatId, chatType, userId, userName, isTyping } = req.body || {};
+  if (!chatId || !chatType || !userId || isTyping === undefined) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+  emitChatTyping(chatId, chatType, userId, userName, isTyping);
+  return res.json({ ok: true });
+});
+
+app.post("/emit/chat-game-playing", requireInternalSecret, (req, res) => {
+  const { chatId, chatType, userId, userName, gameTitle, gameId, isPlaying } =
+    req.body || {};
+  if (!chatId || !chatType || !userId || isPlaying === undefined) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+  emitChatGamePlaying(
+    chatId,
+    chatType,
+    userId,
+    userName,
+    gameTitle,
+    gameId,
+    isPlaying
+  );
+  return res.json({ ok: true });
+});
+
+app.post("/emit/chat-game-score", requireInternalSecret, (req, res) => {
+  const { chatId, chatType, userId, userName, gameTitle, score } =
+    req.body || {};
+  if (!chatId || !chatType || !userId || score === undefined) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+  emitChatGameScore(chatId, chatType, userId, userName, gameTitle, score);
+  return res.json({ ok: true });
+});
+
+// Message status emit helpers
+function emitMessageRead(chatId, chatType, messageId, userId) {
+  const room = `chat:${chatType}:${chatId}`;
+  io.to(room).emit("chat:message:read", {
+    chatId,
+    chatType,
+    messageId,
+    userId,
+    readAt: Date.now(),
+  });
+}
+
+function emitMessageDelivered(chatId, chatType, messageId, userId) {
+  const room = `chat:${chatType}:${chatId}`;
+  io.to(room).emit("chat:message:delivered", {
+    chatId,
+    chatType,
+    messageId,
+    userId,
+    deliveredAt: Date.now(),
+  });
+}
+
+app.post("/emit/chat-message-read", requireInternalSecret, (req, res) => {
+  const { chatId, chatType, messageId, userId } = req.body || {};
+  if (!chatId || !chatType || !messageId || !userId) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+  emitMessageRead(chatId, chatType, messageId, userId);
+  return res.json({ ok: true });
+});
+
+app.post("/emit/chat-message-delivered", requireInternalSecret, (req, res) => {
+  const { chatId, chatType, messageId, userId } = req.body || {};
+  if (!chatId || !chatType || !messageId || !userId) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+  emitMessageDelivered(chatId, chatType, messageId, userId);
   return res.json({ ok: true });
 });
 
