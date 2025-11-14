@@ -121,12 +121,13 @@ io.on("connection", async (socket) => {
         sid: socket.id,
       });
       
-      // Emit online status
+      // Emit online status globally (for direct chats)
       socket.broadcast.emit("user:online", {
         userId,
         online: true,
         timestamp: Date.now(),
       });
+      log.info("🌐 Emitted global user:online", { userId, sid: socket.id });
     }
 
     socket.on("join:challenge", ({ challengeId }) => {
@@ -145,17 +146,116 @@ io.on("connection", async (socket) => {
 
     // Chat room events
     socket.on("join:chat", ({ chatId, chatType }) => {
-      if (!chatId) return;
+      if (!chatId || !userId) {
+        log.warn("join:chat: Missing chatId or userId", { chatId, userId, sid: socket.id });
+        return;
+      }
       const room = `chat:${chatType}:${chatId}`;
       socket.join(room);
-      log.debug("Client joined chat room", { room, sid: socket.id, userId });
+      log.info("🔌 Client joined chat room", { 
+        room, 
+        chatId, 
+        chatType, 
+        userId, 
+        sid: socket.id 
+      });
+      
+      // Use setTimeout to ensure room is fully registered before checking
+      setTimeout(() => {
+        // Get list of online users in this room (after join is complete)
+        const roomSockets = io.sockets.adapter.rooms.get(room);
+        log.info("👥 Room sockets check", { 
+          room, 
+          chatId,
+          roomExists: !!roomSockets, 
+          socketCount: roomSockets ? roomSockets.size : 0 
+        });
+        
+        if (roomSockets && roomSockets.size > 0) {
+          const onlineUserIds = new Set();
+          roomSockets.forEach((socketId) => {
+            const socketInRoom = io.sockets.sockets.get(socketId);
+            if (socketInRoom && socketInRoom.userId) {
+              // Include all users in room (including self for initial list)
+              onlineUserIds.add(socketInRoom.userId);
+              log.debug("👤 Found user in room", { 
+                socketId, 
+                userId: socketInRoom.userId,
+                isSelf: socketInRoom.userId === userId
+              });
+            }
+          });
+          
+          log.info("📊 Online users in room", { 
+            room, 
+            chatId, 
+            totalUsers: onlineUserIds.size, 
+            userIds: Array.from(onlineUserIds) 
+          });
+          
+          // Send list of online users to the joining user (excluding self)
+          const otherUsers = Array.from(onlineUserIds).filter(id => id !== userId);
+          socket.emit("chat:users:online", {
+            chatId,
+            chatType,
+            userIds: otherUsers,
+          });
+          log.info("📤 Sent online users list", { 
+            chatId, 
+            recipient: userId, 
+            onlineCount: otherUsers.length,
+            userIds: otherUsers 
+          });
+        } else {
+          log.warn("⚠️ No sockets found in room", { room, chatId });
+          // Still send empty list so frontend knows room is empty
+          socket.emit("chat:users:online", {
+            chatId,
+            chatType,
+            userIds: [],
+          });
+        }
+      }, 100); // Small delay to ensure room registration
+      
+      // Emit user online status to this specific chat room (to other users)
+      socket.to(room).emit("user:online", {
+        userId,
+        online: true,
+        timestamp: Date.now(),
+        chatId,
+        chatType,
+      });
+      log.info("📢 Emitted user:online to room", { 
+        room, 
+        userId, 
+        chatId
+      });
     });
 
     socket.on("leave:chat", ({ chatId, chatType }) => {
-      if (!chatId) return;
+      if (!chatId || !userId) {
+        log.warn("leave:chat: Missing chatId or userId", { chatId, userId, sid: socket.id });
+        return;
+      }
       const room = `chat:${chatType}:${chatId}`;
+      
+      // Emit user offline status to this specific chat room before leaving
+      socket.to(room).emit("user:offline", {
+        userId,
+        online: false,
+        timestamp: Date.now(),
+        chatId,
+        chatType,
+      });
+      log.info("📢 Emitted user:offline to room", { 
+        room, 
+        userId, 
+        chatId,
+        sid: socket.id 
+      });
+      
       socket.leave(room);
-      log.debug("Client left chat room", { room, sid: socket.id });
+      log.info("🔌 Client left chat room", { room, chatId, userId, sid: socket.id });
     });
 
     // Typing indicator events
@@ -268,14 +368,15 @@ io.on("connection", async (socket) => {
     });
 
     socket.on("disconnect", (reason) => {
-      log.info("Socket disconnected", { sid: socket.id, reason });
-      // Emit offline status
+      log.info("🔌 Socket disconnected", { sid: socket.id, userId, reason });
+      // Emit offline status globally
       if (userId) {
         socket.broadcast.emit("user:offline", {
           userId,
           online: false,
           timestamp: Date.now(),
         });
+        log.info("🌐 Emitted global user:offline", { userId, sid: socket.id });
       }
     });
   } catch (e) {
