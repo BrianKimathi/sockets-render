@@ -340,6 +340,44 @@ io.on("connection", async (socket) => {
       }
     );
 
+    // Chat message events (direct and group)
+    socket.on("chat:message", ({ chatId, chatType, messageId, senderId, senderName, senderAvatar, content, receiverId, timestamp, attachmentType }) => {
+      if (!chatId || !senderId || !content) return;
+      const room = `chat:${chatType}:${chatId}`;
+      
+      // Emit to all users in the chat room (except sender)
+      socket.to(room).emit("chat:message", {
+        chatId,
+        chatType,
+        messageId: messageId || `msg_${Date.now()}_${senderId}`,
+        senderId,
+        senderName: senderName || "User",
+        senderAvatar: senderAvatar || "",
+        content,
+        receiverId,
+        timestamp: timestamp || Date.now(),
+        attachmentType: attachmentType || null,
+      });
+      
+      // Also emit to receiver's user room for direct chats (in case they're not in the chat room)
+      if (chatType === "direct" && receiverId) {
+        socket.to(`user:${receiverId}`).emit("chat:message", {
+          chatId,
+          chatType,
+          messageId: messageId || `msg_${Date.now()}_${senderId}`,
+          senderId,
+          senderName: senderName || "User",
+          senderAvatar: senderAvatar || "",
+          content,
+          receiverId,
+          timestamp: timestamp || Date.now(),
+          attachmentType: attachmentType || null,
+        });
+      }
+      
+      log.debug("Chat message", { room, senderId, receiverId, chatType, sid: socket.id });
+    });
+
     // Message status events (read receipts, delivered)
     socket.on("chat:message:read", ({ chatId, chatType, messageId, userId }) => {
       if (!chatId || !messageId || !userId) return;
